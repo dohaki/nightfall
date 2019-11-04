@@ -11,40 +11,40 @@ import fs from 'fs';
 import utils from 'zkp-utils';
 import config from 'config';
 import Web3 from './web3';
-
-const NFtokenShield = contract(jsonfile.readFileSync('./build/contracts/NFTokenShield.json'));
-NFtokenShield.setProvider(Web3.connect());
-
-const FtokenShield = contract(jsonfile.readFileSync('./build/contracts/FTokenShield.json'));
-FtokenShield.setProvider(Web3.connect());
-
-const VerifierRegistry = contract(
-  jsonfile.readFileSync('./build/contracts/Verifier_Registry.json'),
-);
-VerifierRegistry.setProvider(Web3.connect());
-
-const Verifier = contract(jsonfile.readFileSync('./build/contracts/GM17_v0.json'));
-Verifier.setProvider(Web3.connect());
-
-let vkIds = {};
+import { getContract } from './contractUtils';
 
 const web3 = Web3.connection();
 
 /**
 Loads a verification key to the Verifier Registry
-@param {filepath} vkJsonFile - the verifying key, in JSON format
-@param {filepath} vkIdJsonFile - the JSON in which we store the vkId, after the vk has been loaded to the verifier contract (we are provided the vkId by the smart contract).
-@param {string} vkDescription - human-readable string to describe the vk being uploaded. This will be the vk's 'key' within the vkIdJsonFile.
-E.g. TokenMint, TokenTransfer, CoinMint, CoinBurn, AgreeContract,...
-@param {string} account - the account from which the vk's are being uploaded (also used in creating the vkId)
+ * @param {String} vkJsonFile - Path to vk file in JSON form
+ * @param {Object} blockchainOptions
+ * @param {Object} blockchainOptions.verifierJson - Compiled JSON of verifier contract
+ * @param {String} blockchainOptions.verifierAddress - address of deployed verifier contract
+ * @param {Object} blockchainOptions.verifierRegistryJson - Compiled JSON of verifier contract
+ * @param {String} blockchainOptions.verifierRegistryAddress - address of deployed verifier contract
+ * @param {String} blockchainOptions.account - Account that will send the transactions
 */
-async function loadVk(vkJsonFile, vkDescription, account) {
-  console.log('\nDEPLOYING VK FOR', vkDescription);
+async function loadVk(vkJsonFile, blockchainOptions) {
+  const {
+    verifierJson,
+    verifierAddress,
+    verifierRegistryJson,
+    verifierRegistryAddress,
+    account,
+  } = blockchainOptions;
 
-  // check relevant contracts are deployed:
-  const verifier = await Verifier.deployed();
-  const verifierRegistry = await VerifierRegistry.deployed();
+  console.log(`Loading VK for ${vkJsonFile}`);
 
+  const verifier = contract(verifierJson);
+  verifier.setProvider(Web3.connect());
+  const verifierInstance = await verifier.at(verifierAddress);
+
+  const verifierRegistry = contract(verifierRegistryJson);
+  verifierRegistry.setProvider(Web3.connect());
+  const verifierRegistryInstance = await verifierRegistry.at(verifierRegistryAddress);
+
+  // Get VKs from the /code/gm17 directory and convert them into Solidity uints.
   let vk = await new Promise((resolve, reject) => {
     jsonfile.readFile(vkJsonFile, (err, data) => {
       if (err) reject(err);
@@ -52,14 +52,12 @@ async function loadVk(vkJsonFile, vkDescription, account) {
     });
   });
   vk = Object.values(vk);
-  // convert to flattened array:
   vk = utils.flattenDeep(vk);
-  // convert to decimal, as the solidity functions expect uints
   vk = vk.map(el => utils.hexToDec(el));
 
   // upload the vk to the smart contract
   console.log('Registering verifying key');
-  const txReceipt = await verifierRegistry.registerVk(vk, [verifier.address], {
+  const txReceipt = await verifierRegistryInstance.registerVk(vk, [verifierInstance.address], {
     from: account,
     gas: 6500000,
     gasPrice: config.GASPRICE,
@@ -68,12 +66,77 @@ async function loadVk(vkJsonFile, vkDescription, account) {
   // eslint-disable-next-line no-underscore-dangle
   const vkId = txReceipt.logs[0].args._vkId;
 
-  // add new vkId's to the json
-  vkIds[vkDescription] = {};
-  vkIds[vkDescription].vkId = vkId;
-  vkIds[vkDescription].Address = account;
+  return vkId;
+}
 
-  const vkIdsAsJson = JSON.stringify(vkIds, null, 2);
+/**
+ * Loads VKs to the VerifierRegistry, saves the VkIds to a JSON file, then submits the VkIds to the Shield contracts
+ */
+async function initializeVks() {
+  const accounts = await web3.eth.getAccounts();
+  const account = accounts[0];
+
+  // Get Verifier
+  const { contractJson: verifierJson, contractInstance: verifier } = await getContract('Verifier');
+  const {
+    contractJson: verifierRegistryJson,
+    contractInstance: verifierRegistry,
+  } = await getContract('VerifierRegistry');
+
+  const blockchainOptions = {
+    verifierJson,
+    verifierAddress: verifier.address,
+    verifierRegistryJson,
+    verifierRegistryAddress: verifierRegistry.address,
+    account,
+  };
+
+  let ids;
+
+  // Load VK to VerifierRegistry and get back vkIds
+  try {
+    ids = await Promise.all([
+      loadVk(config.NFT_MINT_VK, blockchainOptions),
+      loadVk(config.NFT_TRANSFER_VK, blockchainOptions),
+      loadVk(config.NFT_BURN_VK, blockchainOptions),
+      loadVk(config.FT_MINT_VK, blockchainOptions),
+      loadVk(config.FT_TRANSFER_VK, blockchainOptions),
+      loadVk(config.FT_BURN_VK, blockchainOptions),
+    ]);
+  } catch (err) {
+    throw new Error('Error while loading VKs', err);
+  }
+
+  // Construct an object that will be written out as a JSON file.
+  const vkIdObject = {
+    MintToken: {
+      vkId: ids[0],
+      Address: account,
+    },
+    TransferToken: {
+      vkId: ids[1],
+      Address: account,
+    },
+    BurnToken: {
+      vkId: ids[2],
+      Address: account,
+    },
+    MintCoin: {
+      vkId: ids[3],
+      Address: account,
+    },
+    TransferCoin: {
+      vkId: ids[4],
+      Address: account,
+    },
+    BurnCoin: {
+      vkId: ids[5],
+      Address: account,
+    },
+  };
+
+  // Write these VK Ids to a JSON file at config.VK_IDS
+  const vkIdsAsJson = JSON.stringify(vkIdObject, null, 2);
   await new Promise((resolve, reject) => {
     fs.writeFile(config.VK_IDS, vkIdsAsJson, err => {
       if (err) {
@@ -82,44 +145,29 @@ async function loadVk(vkJsonFile, vkDescription, account) {
         );
         reject(err);
       }
-      console.log(vkIds[vkDescription]);
       console.log(`writing to ${config.VK_IDS}`);
       resolve();
     });
   });
-}
 
-/**
-Reads the vkIds json from file
-*/
-async function getVkIds() {
-  if (fs.existsSync(config.VK_IDS)) {
-    console.log('Reading vkIds from json file...');
-    vkIds = await new Promise((resolve, reject) => {
-      jsonfile.readFile(config.VK_IDS, (err, data) => {
-        // doesn't natively support promises
-        if (err) reject(err);
-        else resolve(data);
-      });
-    });
-  }
-}
+  const { contractInstance: nfTokenShield } = await getContract('NFTokenShield');
+  const { contractInstance: fTokenShield } = await getContract('FTokenShield');
 
-/**
-Set the vkId's which correspond to 'mint', 'transfer', and 'burn' in the specified Shield contract
-@param {string} account - Ethereum account. MUST be the owner of the shield contracts.
-*/
-async function setVkIds(account) {
-  const nfTokenShield = await NFtokenShield.deployed();
-  const fTokenShield = await FtokenShield.deployed();
-
-  await getVkIds();
-
-  console.log('Setting vkIds within NFTokenShield');
+  // Set these vkIds for the shield contracts.
   await nfTokenShield.setVkIds(
-    vkIds.MintToken.vkId,
-    vkIds.TransferToken.vkId,
-    vkIds.BurnToken.vkId,
+    vkIdObject.MintToken.vkId,
+    vkIdObject.TransferToken.vkId,
+    vkIdObject.BurnToken.vkId,
+    {
+      from: account,
+      gas: 6500000,
+      gasPrice: config.GASPRICE,
+    },
+  );
+  await fTokenShield.setVkIds(
+    vkIdObject.MintCoin.vkId,
+    vkIdObject.TransferCoin.vkId,
+    vkIdObject.BurnCoin.vkId,
     {
       from: account,
       gas: 6500000,
@@ -127,42 +175,11 @@ async function setVkIds(account) {
     },
   );
 
-  console.log('Setting vkIds within fTokenShield');
-  await fTokenShield.setVkIds(vkIds.MintCoin.vkId, vkIds.TransferCoin.vkId, vkIds.BurnCoin.vkId, {
-    from: account,
-    gas: 6500000,
-    gasPrice: config.GASPRICE,
-  });
-}
-
-/**
-Overarching orchestrator:
-- Loads vks to the Verifier Registry
-- Sets vkIds in the Shield contracs
-*/
-async function vkController() {
-  // read existing vkIds (if they exist)
-  await getVkIds();
-
-  const accounts = await web3.eth.getAccounts();
-  const account = accounts[0];
-
-  // load each vk to the Verifier Registry
-  await loadVk(config.NFT_MINT_VK, 'MintToken', account);
-  await loadVk(config.NFT_TRANSFER_VK, 'TransferToken', account);
-  await loadVk(config.NFT_BURN_VK, 'BurnToken', account);
-
-  await loadVk(config.FT_MINT_VK, 'MintCoin', account);
-  await loadVk(config.FT_TRANSFER_VK, 'TransferCoin', account);
-  await loadVk(config.FT_BURN_VK, 'BurnCoin', account);
-
-  await setVkIds(account);
-
   console.log('VK setup complete');
 }
 
 async function runController() {
-  await vkController();
+  await initializeVks();
 }
 
 if (process.env.NODE_ENV !== 'test') runController();
