@@ -15,7 +15,8 @@ import zokrates from './zokrates';
 import cv from './compute-vectors';
 import Element from './Element';
 import Web3 from './web3';
-import { getContract } from './contractUtils';
+import { instantiateContract } from './sdkProvider';
+import ERC20Interface from './build/contracts/ERC20Interface';
 
 const utils = require('zkp-utils');
 
@@ -208,16 +209,14 @@ async function mint(amount, ownerPublicKey, salt, vkId, blockchainOptions) {
   const { fTokenShieldJson, fTokenShieldAddress } = blockchainOptions;
   const account = utils.ensure0x(blockchainOptions.account);
 
-  const fTokenShield = contract(fTokenShieldJson);
-  fTokenShield.setProvider(Web3.connect());
-  const fTokenShieldInstance = await fTokenShield.at(fTokenShieldAddress);
+  const fTokenShield = await instantiateContract(fTokenShieldJson, fTokenShieldAddress);
 
   console.group('\nIN MINT...');
 
   console.log('Finding the relevant Shield and Verifier contracts');
   const verifier = await Verifier.deployed();
   const verifierRegistry = await VerifierRegistry.deployed();
-  console.log('FTokenShield contract address:', fTokenShieldInstance.address);
+  console.log('FTokenShield contract address:', fTokenShield.address);
   console.log('Verifier contract address:', verifier.address);
   console.log('VerifierRegistry contract address:', verifierRegistry.address);
 
@@ -266,10 +265,9 @@ async function mint(amount, ownerPublicKey, salt, vkId, blockchainOptions) {
   proof = proof.map(el => utils.hexToDec(el));
   console.groupEnd();
 
-  // Approve fTokenShield to take tokens from minter's account.
-  // TODO: Make this more generic, getContract will not be part of nightfall-sdk.
-  const { contractInstance: fToken } = await getContract('FToken');
-  await fToken.approve(fTokenShieldInstance.address, parseInt(amount, 16), {
+  const fTokenAddress = await fTokenShield.getFToken.call();
+  const fToken = await instantiateContract(ERC20Interface, fTokenAddress);
+  await fToken.approve(fTokenShield.address, parseInt(amount, 16), {
     from: account,
     gas: 4000000,
     gasPrice: config.GASPRICE,
@@ -286,8 +284,8 @@ async function mint(amount, ownerPublicKey, salt, vkId, blockchainOptions) {
   console.log(`vkId: ${vkId}`);
 
   // Mint the commitment
-  console.log('Approving ERC-20 spend from: ', fTokenShieldInstance.address);
-  const txReceipt = await fTokenShieldInstance.mint(proof, inputs, vkId, amount, commitment, {
+  console.log('Approving ERC-20 spend from: ', fTokenShield.address);
+  const txReceipt = await fTokenShield.mint(proof, inputs, vkId, amount, commitment, {
     from: account,
     gas: 6500000,
     gasPrice: config.GASPRICE,
@@ -297,7 +295,7 @@ async function mint(amount, ownerPublicKey, salt, vkId, blockchainOptions) {
 
   const commitmentIndex = txReceipt.logs[0].args.commitment_index;
 
-  const root = await fTokenShieldInstance.latestRoot();
+  const root = await fTokenShield.latestRoot();
   console.log(`Merkle Root after mint: ${root}`);
   console.groupEnd();
 
@@ -332,9 +330,7 @@ async function transfer(
   const { fTokenShieldJson, fTokenShieldAddress } = blockchainOptions;
   const account = utils.ensure0x(blockchainOptions.account);
 
-  const fTokenShield = contract(fTokenShieldJson);
-  fTokenShield.setProvider(Web3.connect());
-  const fTokenShieldInstance = await fTokenShield.at(fTokenShieldAddress);
+  const fTokenShield = await instantiateContract(fTokenShieldJson, fTokenShieldAddress);
 
   console.group('\nIN TRANSFER...');
 
@@ -348,11 +344,11 @@ async function transfer(
   console.log('Finding the relevant Shield and Verifier contracts');
   const verifier = await Verifier.deployed();
   const verifierRegistry = await VerifierRegistry.deployed();
-  console.log('FTokenShield contract address:', fTokenShieldInstance.address);
+  console.log('FTokenShield contract address:', fTokenShield.address);
   console.log('Verifier contract address:', verifier.address);
   console.log('VerifierRegistry contract address:', verifierRegistry.address);
 
-  const root = await fTokenShieldInstance.latestRoot();
+  const root = await fTokenShield.latestRoot();
   console.log(`Merkle Root: ${root}`);
 
   // Calculate new arguments for the proof:
@@ -369,7 +365,7 @@ async function transfer(
   // we need the Merkle path from the token commitment to the root, expressed as Elements
   const pathC = await cv.computePath(
     account,
-    fTokenShieldInstance,
+    fTokenShield,
     inputCommitments[0].commitment,
     inputCommitments[0].index,
   );
@@ -383,7 +379,7 @@ async function transfer(
   // console.log(`pathCElements.positions:`, pathCElements.positions);
   const pathD = await cv.computePath(
     account,
-    fTokenShieldInstance,
+    fTokenShield,
     inputCommitments[1].commitment,
     inputCommitments[1].index,
   );
@@ -513,23 +509,13 @@ async function transfer(
   console.log(`vkId: ${vkId}`);
 
   // Transfers commitment
-  const transferReceipt = await fTokenShieldInstance.transfer(
-    proof,
-    inputs,
-    vkId,
-    root,
-    nC,
-    nD,
-    zE,
-    zF,
-    {
-      from: account,
-      gas: 6500000,
-      gasPrice: config.GASPRICE,
-    },
-  );
+  const transferReceipt = await fTokenShield.transfer(proof, inputs, vkId, root, nC, nD, zE, zF, {
+    from: account,
+    gas: 6500000,
+    gasPrice: config.GASPRICE,
+  });
 
-  const newRoot = await fTokenShieldInstance.latestRoot();
+  const newRoot = await fTokenShield.latestRoot();
   console.log(`Merkle Root after transfer: ${newRoot}`);
   console.groupEnd();
 
@@ -582,9 +568,7 @@ async function burn(
 
   const account = utils.ensure0x(blockchainOptions.account);
 
-  const fTokenShield = contract(fTokenShieldJson);
-  fTokenShield.setProvider(Web3.connect());
-  const fTokenShieldInstance = await fTokenShield.at(fTokenShieldAddress);
+  const fTokenShield = await instantiateContract(fTokenShieldJson, fTokenShieldAddress);
 
   let payTo = _payTo;
   if (payTo === undefined) payTo = account; // have the option to pay out to another address
@@ -594,18 +578,18 @@ async function burn(
   console.log('Finding the relevant Shield and Verifier contracts');
   const verifier = await Verifier.deployed();
   const verifierRegistry = await VerifierRegistry.deployed();
-  console.log('FTokenShield contract address:', fTokenShieldInstance.address);
+  console.log('FTokenShield contract address:', fTokenShield.address);
   console.log('Verifier contract address:', verifier.address);
   console.log('VerifierRegistry contract address:', verifierRegistry.address);
 
-  const root = await fTokenShieldInstance.latestRoot(); // solidity getter for the public variable latestRoot
+  const root = await fTokenShield.latestRoot(); // solidity getter for the public variable latestRoot
   console.log(`Merkle Root: ${root}`);
 
   // Calculate new arguments for the proof:
   const Nc = utils.concatenateThenHash(salt, receiverSecretKey);
 
   // We need the Merkle path from the commitment to the root, expressed as Elements
-  const path = await cv.computePath(account, fTokenShieldInstance, commitment, commitmentIndex);
+  const path = await cv.computePath(account, fTokenShield, commitment, commitmentIndex);
   const pathElements = {
     elements: path.path.map(
       element => new Element(element, 'field', config.MERKLE_HASHLENGTH * 8, 1),
@@ -680,13 +664,13 @@ async function burn(
   console.log(`vkId: ${vkId}`);
 
   // Burn the commitment and return tokens to the payTo account.
-  await fTokenShieldInstance.burn(proof, inputs, vkId, root, Nc, amount, payTo, {
+  await fTokenShield.burn(proof, inputs, vkId, root, Nc, amount, payTo, {
     from: account,
     gas: 6500000,
     gasPrice: config.GASPRICE,
   });
 
-  const newRoot = await fTokenShieldInstance.latestRoot();
+  const newRoot = await fTokenShield.latestRoot();
   console.log(`Merkle Root after burn: ${newRoot}`);
   console.groupEnd();
 
