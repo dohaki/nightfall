@@ -17,6 +17,7 @@ import cv from './compute-vectors';
 import Element from './Element';
 import Web3 from './web3';
 import { getContract } from './contractUtils';
+import logger from './logger';
 
 const NFTokenShield = contract(jsonfile.readFileSync('./build/contracts/NFTokenShield.json'));
 
@@ -242,14 +243,14 @@ async function mint(tokenId, ownerPublicKey, salt, vkId, blockchainOptions) {
   nfTokenShield.setProvider(Web3.connect());
   const nfTokenShieldInstance = await nfTokenShield.at(nfTokenShieldAddress);
 
-  console.group('\nIN MINT...');
+  logger.verbose('\nIN MINT...');
 
-  console.info('Finding the relevant Shield and Verifier contracts...');
+  logger.debug('Finding the relevant Shield and Verifier contracts...');
   const verifier = await Verifier.deployed();
   const verifier_registry = await Verifier_Registry.deployed();
-  console.log('NFTokenShield contract address:', nfTokenShieldInstance.address);
-  console.log('Verifier contract address:', verifier.address);
-  console.log('Verifier_Registry contract address:', verifier_registry.address);
+  logger.debug('NFTokenShield contract address:', nfTokenShieldInstance.address);
+  logger.debug('Verifier contract address:', verifier.address);
+  logger.debug('Verifier_Registry contract address:', verifier_registry.address);
 
   // Calculate new arguments for the proof:
   const commitment = utils.concatenateThenHash(
@@ -259,30 +260,28 @@ async function mint(tokenId, ownerPublicKey, salt, vkId, blockchainOptions) {
   );
 
   // Summarise values in the console:
-  console.group('Existing Proof Variables:');
+  logger.debug('Existing Proof Variables:');
   const p = config.ZOKRATES_PACKING_SIZE; // packing size in bits
   const pt = Math.ceil((config.INPUTS_HASHLENGTH * 8) / config.ZOKRATES_PACKING_SIZE); // packets in bits
-  console.log('A:', tokenId, ' : ', utils.hexToFieldPreserve(tokenId, p, pt));
-  console.log('pk_A:', ownerPublicKey, ' : ', utils.hexToFieldPreserve(ownerPublicKey, p, pt));
-  console.log('S_A:', salt, ' : ', utils.hexToFieldPreserve(salt, p, pt));
-  console.groupEnd();
+  logger.debug('A:', tokenId, ' : ', utils.hexToFieldPreserve(tokenId, p, pt));
+  logger.debug('pk_A:', ownerPublicKey, ' : ', utils.hexToFieldPreserve(ownerPublicKey, p, pt));
+  logger.debug('S_A:', salt, ' : ', utils.hexToFieldPreserve(salt, p, pt));
 
-  console.group('New Proof Variables:');
-  console.log('z_A:', commitment, ' : ', utils.hexToFieldPreserve(commitment, p, pt));
-  console.groupEnd();
+  logger.debug('New Proof Variables:');
+  logger.debug('z_A:', commitment, ' : ', utils.hexToFieldPreserve(commitment, p, pt));
 
   const publicInputHash = utils.concatenateThenHash(tokenId, commitment);
-  console.log('publicInputHash:', publicInputHash);
+  logger.debug('publicInputHash:', publicInputHash);
 
   // get the pwd so we can talk to the container:
   const pwd = process.env.PWD.toString();
-  console.log(pwd);
+  logger.debug(pwd);
 
   const hostDir = config.NFT_MINT_DIR;
-  console.log(hostDir);
+  logger.debug(hostDir);
 
   // compute the proof
-  console.group('Computing proof with w=[pk_A,S_A] x=[A,z_A,1]');
+  logger.debug('Computing proof with w=[pk_A,S_A] x=[A,z_A,1]');
   let proof = await computeProof(
     [
       new Element(publicInputHash, 'field', 248, 1),
@@ -299,11 +298,10 @@ async function mint(tokenId, ownerPublicKey, salt, vkId, blockchainOptions) {
   proof = utils.flattenDeep(proof);
   // convert to decimal, as the solidity functions expect uints
   proof = proof.map(el => utils.hexToDec(el));
-  console.groupEnd();
 
   // CHECK!!!!
   const registry = await verifier.getRegistry();
-  console.log('Check that a registry has actually been registered:', registry);
+  logger.debug('Check that a registry has actually been registered:', registry);
 
   // Add nfTokenShield as an approver for the token transfer
   const { contractInstance: nfToken } = await getContract('NFTokenMetadata');
@@ -312,15 +310,15 @@ async function mint(tokenId, ownerPublicKey, salt, vkId, blockchainOptions) {
     gas: 4000000,
   });
 
-  console.group('Minting within the Shield contract');
+  logger.debug('Minting within the Shield contract');
 
   const inputs = cv.computeVectors([new Element(publicInputHash, 'field', 248, 1)]);
 
-  console.log('proof:');
-  console.log(proof);
-  console.log('inputs:');
-  console.log(inputs);
-  console.log(`vkId: ${vkId}`);
+  logger.debug('proof:');
+  logger.debug(proof);
+  logger.debug('inputs:');
+  logger.debug(inputs);
+  logger.debug(`vkId: ${vkId}`);
 
   // Mint the commitment
   const txReceipt = await nfTokenShieldInstance.mint(proof, inputs, vkId, tokenId, commitment, {
@@ -331,12 +329,10 @@ async function mint(tokenId, ownerPublicKey, salt, vkId, blockchainOptions) {
   const commitmentIndex = txReceipt.logs[0].args.commitment_index;
 
   const root = await nfTokenShieldInstance.latestRoot();
-  console.log(`Merkle Root after mint: ${root}`);
-  console.groupEnd();
+  logger.debug(`Merkle Root after mint: ${root}`);
 
-  console.log('Mint output: [z_A, z_A_index]:', commitment, commitmentIndex.toString());
-  console.log('MINT COMPLETE\n');
-  console.groupEnd();
+  logger.debug('Mint output: [z_A, z_A_index]:', commitment, commitmentIndex.toString());
+  logger.verbose('MINT COMPLETE\n');
 
   return { commitment, commitmentIndex };
 }
@@ -377,16 +373,18 @@ async function transfer(
   nfTokenShield.setProvider(Web3.connect());
   const nfTokenShieldInstance = await nfTokenShield.at(nfTokenShieldAddress);
 
-  console.log('Finding the relevant Shield and Verifier contracts');
+  logger.verbose('Transferring an NFT Commitment');
+
+  logger.debug('Finding the relevant Shield and Verifier contracts');
   const verifier = await Verifier.at(await nfTokenShieldInstance.getVerifier.call());
   const verifier_registry = await Verifier_Registry.at(await verifier.getRegistry.call());
-  console.log('NFTokenShield contract address:', nfTokenShieldInstance.address);
-  console.log('Verifier contract address:', verifier.address);
-  console.log('Verifier_Registry contract address:', verifier_registry.address);
+  logger.debug('NFTokenShield contract address:', nfTokenShieldInstance.address);
+  logger.debug('Verifier contract address:', verifier.address);
+  logger.debug('Verifier_Registry contract address:', verifier_registry.address);
 
   // Get token data from the Shield contract:
   const root = await nfTokenShieldInstance.latestRoot(); // solidity getter for the public variable latestRoot
-  console.log(`Merkle Root: ${root}`);
+  logger.debug(`Merkle Root: ${root}`);
 
   // Calculate new arguments for the proof:
   const n = utils.concatenateThenHash(originalCommitmentSalt, senderSecretKey);
@@ -414,50 +412,48 @@ async function transfer(
   }
 
   // Summarise values in the console:
-  console.group('Existing Proof Variables:');
+  logger.debug('Existing Proof Variables:');
   const p = config.ZOKRATES_PACKING_SIZE;
   const pt = Math.ceil((config.INPUTS_HASHLENGTH * 8) / config.ZOKRATES_PACKING_SIZE);
-  console.log('A: ', tokenId, ' : ', utils.hexToFieldPreserve(tokenId, p, pt));
-  console.log(
+  logger.debug('A: ', tokenId, ' : ', utils.hexToFieldPreserve(tokenId, p, pt));
+  logger.debug(
     'S_A: ',
     originalCommitmentSalt,
     ' : ',
     utils.hexToFieldPreserve(originalCommitmentSalt, p, pt),
   );
-  console.log(
+  logger.debug(
     'S_B: ',
     newCommitmentSalt,
     ' : ',
     utils.hexToFieldPreserve(newCommitmentSalt, p, pt),
   );
-  console.log('sk_A: ', senderSecretKey, ' : ', utils.hexToFieldPreserve(senderSecretKey, p, pt));
-  console.log(
+  logger.debug('sk_A: ', senderSecretKey, ' : ', utils.hexToFieldPreserve(senderSecretKey, p, pt));
+  logger.debug(
     'pk_B: ',
     receiverPublicKey,
     ' : ',
     utils.hexToFieldPreserve(receiverPublicKey, p, pt),
   );
-  console.log('z_A: ', commitment, ' : ', utils.hexToFieldPreserve(commitment, p, pt));
-  console.groupEnd();
+  logger.debug('z_A: ', commitment, ' : ', utils.hexToFieldPreserve(commitment, p, pt));
 
-  console.group('New Proof Variables:');
-  console.log('n: ', n, ' : ', utils.hexToFieldPreserve(n, p, pt));
-  console.log('z_B: ', outputCommitment, ' : ', utils.hexToFieldPreserve(outputCommitment, p, pt));
-  console.log('root: ', root, ' : ', utils.hexToFieldPreserve(root, p));
-  console.groupEnd();
+  logger.debug('New Proof Variables:');
+  logger.debug('n: ', n, ' : ', utils.hexToFieldPreserve(n, p, pt));
+  logger.debug('z_B: ', outputCommitment, ' : ', utils.hexToFieldPreserve(outputCommitment, p, pt));
+  logger.debug('root: ', root, ' : ', utils.hexToFieldPreserve(root, p));
 
   const publicInputHash = utils.concatenateThenHash(root, n, outputCommitment);
-  console.log('publicInputHash:', publicInputHash);
+  logger.debug('publicInputHash:', publicInputHash);
 
   // get the pwd so we can talk to the container:
   const pwd = process.env.PWD.toString();
-  console.log(pwd);
+  logger.debug(pwd);
 
   const hostDir = config.NFT_TRANSFER_DIR;
-  console.log(hostDir);
+  logger.debug(hostDir);
 
   // compute the proof
-  console.group('Computing proof with w=[A,path[],pk_B,S_A,S_B,sk_A]  x=[n,root,z_B,1]');
+  logger.debug('Computing proof with w=[A,path[],pk_B,S_A,S_B,sk_A]  x=[n,root,z_B,1]');
   let proof = await computeProof(
     [
       new Element(publicInputHash, 'field', 248, 1),
@@ -480,17 +476,16 @@ async function transfer(
   proof = utils.flattenDeep(proof);
   // convert to decimal, as the solidity functions expect uints
   proof = proof.map(el => utils.hexToDec(el));
-  console.groupEnd();
 
-  console.group('Transferring within the Shield contract');
+  logger.debug('Transferring within the Shield contract');
 
   const inputs = cv.computeVectors([new Element(publicInputHash, 'field', 248, 1)]);
 
-  console.log('proof:');
-  console.log(proof);
-  console.log('inputs:');
-  console.log(inputs);
-  console.log(`vkId: ${vkId}`);
+  logger.debug('proof:');
+  logger.debug(proof);
+  logger.debug('inputs:');
+  logger.debug(inputs);
+  logger.debug(`vkId: ${vkId}`);
 
   const transferReceipt = await nfTokenShieldInstance.transfer(
     proof,
@@ -509,11 +504,9 @@ async function transfer(
   const outputCommitmentIndex = transferReceipt.logs[0].args.commitment_index;
 
   const newRoot = await nfTokenShieldInstance.latestRoot(); // solidity getter for the public variable latestRoot
-  console.log(`Merkle Root after transfer: ${newRoot}`);
-  console.groupEnd();
+  logger.debug(`Merkle Root after transfer: ${newRoot}`);
 
-  console.log('TRANSFER COMPLETE\n');
-  console.groupEnd();
+  logger.verbose('TRANSFER COMPLETE\n');
 
   return {
     outputCommitment,
@@ -553,24 +546,24 @@ async function burn(
   const nfTokenShieldInstance = await nfTokenShield.at(nfTokenShieldAddress);
 
   const payToOrDefault = payTo || account; // have the option to pay out to another address
-  console.group('\nIN BURN...');
-  console.log('A', tokenId);
-  console.log('Sk_A', secretKey);
-  console.log('S_A', salt);
-  console.log('z_A', commitment);
-  console.log('z_A_index', commitmentIndex);
-  console.log('account', account);
-  console.log('payTo', payToOrDefault);
+  logger.verbose('\nIN BURN...');
+  logger.debug('A', tokenId);
+  logger.debug('Sk_A', secretKey);
+  logger.debug('S_A', salt);
+  logger.debug('z_A', commitment);
+  logger.debug('z_A_index', commitmentIndex);
+  logger.debug('account', account);
+  logger.debug('payTo', payToOrDefault);
 
-  console.log('Finding the relevant Shield and Verifier contracts');
+  logger.debug('Finding the relevant Shield and Verifier contracts');
   const verifier = await Verifier.deployed();
   const verifier_registry = await Verifier_Registry.deployed();
-  console.log('NFTokenShield contract address:', nfTokenShieldInstance.address);
-  console.log('Verifier contract address:', verifier.address);
-  console.log('Verifier_Registry contract address:', verifier_registry.address);
+  logger.debug('NFTokenShield contract address:', nfTokenShieldInstance.address);
+  logger.debug('Verifier contract address:', verifier.address);
+  logger.debug('Verifier_Registry contract address:', verifier_registry.address);
 
   const root = await nfTokenShieldInstance.latestRoot(); // solidity getter for the public variable latestRoot
-  console.log(`Merkle Root: ${root}`);
+  logger.debug(`Merkle Root: ${root}`);
 
   // Calculate new arguments for the proof:
   const Na = utils.concatenateThenHash(salt, secretKey);
@@ -593,35 +586,33 @@ async function burn(
   }
 
   // Summarise values in the console:
-  console.group('Existing Proof Variables:');
+  logger.debug('Existing Proof Variables:');
   const p = config.ZOKRATES_PACKING_SIZE;
   const pt = Math.ceil((config.INPUTS_HASHLENGTH * 8) / config.ZOKRATES_PACKING_SIZE);
-  console.log(`A: ${tokenId} : ${utils.hexToFieldPreserve(tokenId, p, pt)}`);
-  console.log(`sk_A: ${secretKey} : ${utils.hexToFieldPreserve(secretKey, p, pt)}`);
-  console.log(`S_A: ${salt} : ${utils.hexToFieldPreserve(salt, p, pt)}`);
-  console.log(`z_A: ${commitment} : ${utils.hexToFieldPreserve(commitment, p, pt)}`);
-  console.log(`payTo: ${payToOrDefault}`);
+  logger.debug(`A: ${tokenId} : ${utils.hexToFieldPreserve(tokenId, p, pt)}`);
+  logger.debug(`sk_A: ${secretKey} : ${utils.hexToFieldPreserve(secretKey, p, pt)}`);
+  logger.debug(`S_A: ${salt} : ${utils.hexToFieldPreserve(salt, p, pt)}`);
+  logger.debug(`z_A: ${commitment} : ${utils.hexToFieldPreserve(commitment, p, pt)}`);
+  logger.debug(`payTo: ${payToOrDefault}`);
   const payToLeftPadded = utils.leftPadHex(payToOrDefault, config.INPUTS_HASHLENGTH * 2); // left-pad the payToAddress with 0's to fill all 256 bits (64 octets) (so the sha256 function is hashing the same thing as inside the zokrates proof)
-  console.log(`payToLeftPadded: ${payToLeftPadded}`);
-  console.groupEnd();
+  logger.debug(`payToLeftPadded: ${payToLeftPadded}`);
 
-  console.group('New Proof Variables:');
-  console.log(`Na: ${Na} : ${utils.hexToFieldPreserve(Na, p, pt)}`);
-  console.log(`root: ${root} : ${utils.hexToFieldPreserve(root, p, pt)}`);
-  console.groupEnd();
+  logger.debug('New Proof Variables:');
+  logger.debug(`Na: ${Na} : ${utils.hexToFieldPreserve(Na, p, pt)}`);
+  logger.debug(`root: ${root} : ${utils.hexToFieldPreserve(root, p, pt)}`);
 
   const publicInputHash = utils.concatenateThenHash(root, Na, tokenId, payToLeftPadded); // notice we're using the version of payTo which has been padded to 256-bits; to match our derivation of publicInputHash within our zokrates proof.
-  console.log('publicInputHash:', publicInputHash);
+  logger.debug('publicInputHash:', publicInputHash);
 
   // get the pwd so we can talk to the container:
   const pwd = process.env.PWD.toString();
-  console.log(pwd);
+  logger.debug(pwd);
 
   const hostDir = config.NFT_BURN_DIR;
-  console.log(hostDir);
+  logger.debug(hostDir);
 
   // compute the proof
-  console.group('Computing proof with w=[sk_A,S_A,path[],order] x=[A,Na,root,1]');
+  logger.debug('Computing proof with w=[sk_A,S_A,path[],order] x=[A,Na,root,1]');
   let proof = await computeProof(
     [
       new Element(publicInputHash, 'field', 248, 1),
@@ -642,17 +633,16 @@ async function burn(
   proof = utils.flattenDeep(proof);
   // convert to decimal, as the solidity functions expect uints
   proof = proof.map(el => utils.hexToDec(el));
-  console.groupEnd();
 
-  console.group('Burning within the Shield contract');
+  logger.debug('Burning within the Shield contract');
 
   const inputs = cv.computeVectors([new Element(publicInputHash, 'field', 248, 1)]);
 
-  console.log('proof:');
-  console.log(proof);
-  console.log('inputs:');
-  console.log(inputs);
-  console.log(`vkId: ${vkId}`);
+  logger.debug('proof:');
+  logger.debug(proof);
+  logger.debug('inputs:');
+  logger.debug(inputs);
+  logger.debug(`vkId: ${vkId}`);
 
   // Burns commitment and returns token to payTo
   await nfTokenShieldInstance.burn(proof, inputs, vkId, root, Na, tokenId, payTo, {
@@ -662,11 +652,9 @@ async function burn(
   });
 
   const newRoot = await nfTokenShieldInstance.latestRoot();
-  console.log(`Merkle Root after burn: ${newRoot}`);
-  console.groupEnd();
+  logger.debug(`Merkle Root after burn: ${newRoot}`);
 
-  console.log('BURN COMPLETE\n');
-  console.groupEnd();
+  logger.verbose('BURN COMPLETE\n');
   return commitment;
 }
 

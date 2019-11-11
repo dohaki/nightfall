@@ -12,6 +12,7 @@ import config from 'config';
 import utils from './zkpUtils';
 import Web3 from './web3';
 import { getContract } from './contractUtils';
+import logger from './logger';
 
 const web3 = Web3.connection();
 
@@ -34,7 +35,7 @@ async function loadVk(vkJsonFile, blockchainOptions) {
     account,
   } = blockchainOptions;
 
-  console.log(`Loading VK for ${vkJsonFile}`);
+  logger.verbose(`Loading VK for ${vkJsonFile}`);
 
   const verifier = contract(verifierJson);
   verifier.setProvider(Web3.connect());
@@ -56,7 +57,7 @@ async function loadVk(vkJsonFile, blockchainOptions) {
   vk = vk.map(el => utils.hexToDec(el));
 
   // upload the vk to the smart contract
-  console.log('Registering verifying key');
+  logger.debug('Registering verifying key');
   const txReceipt = await verifierRegistryInstance.registerVk(vk, [verifierInstance.address], {
     from: account,
     gas: 6500000,
@@ -140,12 +141,12 @@ async function initializeVks() {
   await new Promise((resolve, reject) => {
     fs.writeFile(config.VK_IDS, vkIdsAsJson, err => {
       if (err) {
-        console.log(
+        logger.error(
           `fs.writeFile has failed when writing the new vk information to vkIds.json. Here's the error:`,
         );
         reject(err);
       }
-      console.log(`writing to ${config.VK_IDS}`);
+      logger.debug(`writing to ${config.VK_IDS}`);
       resolve();
     });
   });
@@ -175,7 +176,7 @@ async function initializeVks() {
     },
   );
 
-  console.log('VK setup complete');
+  logger.verbose('VK setup complete');
 }
 
 async function runController() {
