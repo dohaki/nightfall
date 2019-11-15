@@ -12,7 +12,7 @@ You will need to have completed the trusted setup. This is done simply by runnin
 Nightfall root):
 
 ```sh
-npm run setupAll
+./nightfall-generate-trusted-setup
 ```
 
 If you have previously run the Nightfall application, you will already have completed this step and
@@ -96,8 +96,7 @@ rm -rf node_modules
 
 ## Further reading
 
-- [README-tools-trusted-setup.md](code/README-tools-trusted-setup.md) explains the steps that npm
-  will run in the "setup" and "setupAll" tasks.
+- [README-tools-trusted-setup.md](code/README-tools-trusted-setup.md) Instructions for manually generating the verification keys and proving keys for ZoKrates from the .pcode files.
 - [README-manual-trusted-setup.md](code/README-manual-trusted-setup.md) is a deeper walkthrough of
   the "generating key pairs" task above.
 - [README-tools-code-preprop.md](code/README-tools-code-preprop.md) explains "pcode", an abbreviated
