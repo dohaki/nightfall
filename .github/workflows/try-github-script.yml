@@ -48,7 +48,7 @@ jobs:
               repository: {
                 getCommit: {
                   method: "GET",
-                  url: "/repos/:owner/:repo/commits/:ref/branch",
+                  url: "/repos/:owner/:repo/commits/:ref/:branch",
                   headers: {
                     accept: "application/vnd.github.foo-bar-preview+json"
                   },
