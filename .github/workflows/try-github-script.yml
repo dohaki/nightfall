@@ -48,7 +48,7 @@ jobs:
               repository: {
                 getCommit: {
                   method: "GET",
-                  url: "/repos/:owner/:repo/commits/:ref",
+                  url: "/repos/:owner/:repo/commits/:ref/branch",
                   headers: {
                     accept: "application/vnd.github.foo-bar-preview+json"
                   },
@@ -65,6 +65,10 @@ jobs:
                       required: true,
                       type: "string"
                     }
+                    branch: {
+                      required: true,
+                      type: "string"
+                    }
                   }
                 }
               }
@@ -73,7 +77,8 @@ jobs:
             const {data: { files }} = await github.repository.getCommit({
               owner,
               repo,
-              ref: commitHash
+              ref: commitHash,
+              branch: "liju.jose/configure-github-actions-4"
             });
 
             for (file of files) {
