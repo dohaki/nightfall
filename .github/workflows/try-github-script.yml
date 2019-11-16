@@ -1,0 +1,111 @@
+name: try github scripts
+
+on:
+  push:
+    branches:
+      - liju.jose/configure-github-actions-4
+
+jobs:
+  try-github-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@0.2.0
+        with:
+          github-token: ${{github.token}}
+          script: |
+            const owner = context.payload.sender.login;
+            const repo = context.payload.repository.name;
+            const commitHash = context.payload.after;
+            let runGithubActions = false;
+
+            github.registerEndpoints({
+              pr: {
+                commits: {
+                  method: "GET",
+                  url: "/repos/:owner/:repo/commits/:branch",
+                  headers: {
+                    accept: "application/vnd.github.foo-bar-preview+json"
+                  },
+                  params: {
+                    owner: {
+                      required: true,
+                      type: "string"
+                    },
+                    repo: {
+                      required: true,
+                      type: "string"
+                    },
+                    branch: {
+                      required: true,
+                      type: "string"
+                    }
+                  }
+                }
+              }
+            });
+
+            github.registerEndpoints({
+              repository: {
+                getCommit: {
+                  method: "GET",
+                  url: "/repos/:owner/:repo/commits/:ref",
+                  headers: {
+                    accept: "application/vnd.github.foo-bar-preview+json"
+                  },
+                  params: {
+                    owner: {
+                      required: true,
+                      type: "string"
+                    },
+                    repo: {
+                      required: true,
+                      type: "string"
+                    },
+                    ref: {
+                      required: true,
+                      type: "string"
+                    }
+                  }
+                }
+              }
+            });
+
+            const {data: { files }} = await github.repository.getCommit({
+              owner,
+              repo,
+              ref: commitHash
+            });
+
+            for (file of files) {
+              if (file.filename.includes(".github/workflows/")) {
+                runGithubActions = true; 
+                break;
+              }
+              if (file.filename.includes("integration-test/")) {
+                runGithubActions = true; 
+                break;
+              }
+              if (file.filename.includes("zkp/_tests_/")) {
+                runGithubActions = true; 
+                break;
+              }
+            }
+
+            if (!runGithubActions) return;
+
+            const {data: pullRequests} = await github.pulls.list({
+              owner,
+              repo,
+              base: "master",
+              state: "open"
+            });
+
+            for (pr of pullRequests) {
+              const {data: commit} = await github.pr.commits({
+                owner,
+                repo,
+                branch: pr.head.ref
+              });
+              console.log(commit.sha, pr.number);
+            }
+            
