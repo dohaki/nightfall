@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/github-script@0.2.0
         with:
-          github-token: 52dae14c07d399e0dfe57b6f1d4bc7a53c8b01d5
+          github-token: ${{github.token}}
           script: |
             const owner = context.payload.sender.login;
             const repo = context.payload.repository.name;
