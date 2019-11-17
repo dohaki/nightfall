@@ -16,7 +16,6 @@ jobs:
             const owner = context.payload.sender.login;
             const repo = context.payload.repository.name;
             const commitHash = context.payload.after;
-            let runGithubActions = false;
 
             github.registerEndpoints({
               pr: {
@@ -69,29 +68,6 @@ jobs:
                 }
               }
             });
-
-            const {data: { files }} = await github.repository.getCommit({
-              owner,
-              repo,
-              ref: commitHash
-            });
-
-            for (file of files) {
-              if (file.filename.includes(".github/workflows/")) {
-                runGithubActions = true; 
-                break;
-              }
-              if (file.filename.includes("integration-test/")) {
-                runGithubActions = true; 
-                break;
-              }
-              if (file.filename.includes("zkp/_tests_/")) {
-                runGithubActions = true; 
-                break;
-              }
-            }
-
-            if (!runGithubActions) return;
 
             const {data: pullRequests} = await github.pulls.list({
               owner,
